@@ -27,7 +27,7 @@ jobs:
         with:
           node-version: '22'
       - name: Check data logic
-        run: node --test tests/core.test.mjs
+        run: node --test tests/*.test.mjs
       - name: Retrieve official readings
         id: refresh
         continue-on-error: true
@@ -49,7 +49,8 @@ jobs:
       - name: Assemble static site
         run: |
           mkdir -p _site/data
-          cp index.html style.css app.mjs core.mjs icon.svg _site/
+          cp index.html style.css app.mjs core.mjs running.mjs icon.svg manifest.webmanifest sw.js _site/
+          cp -r icons _site/
           cp data/latest.json _site/data/
       - uses: actions/upload-pages-artifact@v4
         with:
