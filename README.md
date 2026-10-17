@@ -1,4 +1,4 @@
-# Udara — Malaysia Air Monitor
+# Udara by SMT — Malaysia Air Monitor · v1.1
 
 A responsive, dependency-free IPU dashboard designed for GitHub Pages. No API key, paid service, or running PC is needed. This is an independent dashboard, not an official DOE application.
 
@@ -10,7 +10,7 @@ A responsive, dependency-free IPU dashboard designed for GitHub Pages. No API ke
 4. Under **Settings → Actions → General → Workflow permissions**, allow **Read and write permissions**. The workflow stores new observations in `data/latest.json`. Repository rules must permit the workflow to push to `main`.
 5. Open **Actions → Update IPU and deploy → Run workflow → main**. If the first automatic run failed before Pages was enabled, rerun it now.
 6. When deployment finishes, open the URL under **Settings → Pages**: normally `https://YOUR-USERNAME.github.io/YOUR-REPOSITORY/`.
-7. Tap **Use my location**, then allow location access. On a laptop, approximate Wi-Fi positioning may be less precise than phone GPS. If permission is denied, search for a station or choose one from the table.
+7. Location is requested automatically when the app opens. Allow access when prompted. Tap **Use my location** to retry if needed. On a laptop, approximate Wi-Fi positioning may be less precise than phone GPS. If permission is denied, search for a station or choose one from the table.
 
 Do not upload the ZIP itself as the website. No npm installation or build is needed. All paths support both a repository subdirectory and a custom domain. To use your own domain, configure it under GitHub Pages settings and follow GitHub's DNS instructions.
 
@@ -33,7 +33,7 @@ Do not upload the ZIP itself as the website. No npm installation or build is nee
 ## Features
 
 - Nearest station using browser geolocation and great-circle distance, calculated entirely in the browser.
-- Explicit default station (Putrajaya) before location access, or your last selected station. Never presents that default as your current location.
+- Automatic location request on opening. A saved station or Putrajaya is only a labelled fallback if location is unavailable; the running popup asks you to confirm a station before assessing suitability.
 - Search by station/state; state filter; highest, lowest, alphabetical and nearest sorting.
 - Station timestamp, freshness, distance, dominant pollutant and site details.
 - On-demand OpenStreetMap; external map link remains usable if the embed is blocked.
@@ -56,7 +56,7 @@ Windows can use `py -m http.server 8080`. Open http://localhost:8080. Do not dou
 Node.js 22 or later:
 
 ```bash
-node --test tests/core.test.mjs
+node --test tests/*.test.mjs
 node scripts/update-data.mjs
 ```
 
@@ -78,3 +78,28 @@ Tests cover category boundaries, missing data, distances, stale data, rejected s
 Official source: https://eqms.doe.gov.my/
 GitHub Pages workflow reference: https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
 GitHub scheduled workflow reference: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule
+
+
+## Updating your existing deployment to v1.1
+
+Upload and replace the supplied application files **and** `.github/workflows/update-and-deploy.yml`. The workflow now copies the PWA icons, manifest, service worker and running-advice module. **Keep your repository's existing `data/latest.json`** when updating to preserve your collected history; do not overwrite it with the snapshot in this ZIP. Keep any existing custom-domain settings or CNAME file. Run the workflow after updating.
+
+New files: `running.mjs`, `manifest.webmanifest`, `sw.js`, `icons/`, and `tests/running.test.mjs`.
+
+### iPhone installation
+
+Open your HTTPS site in Safari → Share → Add to Home Screen → enable Open as Web App if offered → Add. The opaque 180px Apple touch icon is supplied alongside 192px, 512px and maskable PWA icons. The installed app opens in standalone mode. If an old home-screen shortcut retains its icon, remove that shortcut and add the updated site again. Browser permission is still required for location; automatic detection cannot bypass it.
+
+### Running popup
+
+Shows on each fresh page opening, after the location attempt, and when returning after more than five minutes in the background. Reopen anytime using **Running outlook** beneath the current reading. Morning, afternoon, evening and night labels use Malaysia time; they do not predict future air quality. Dismiss using the close button, Back to dashboard, Escape, or outside the sheet. Reduced-motion preferences disable animations.
+
+Advice is a conservative running interpretation of DOE outdoor-activity guidance. At IPU 0–50, outdoor running is generally suitable from an air-quality perspective; at 51–100 the app suggests comfortable effort; at 101–200 it suggests a cleaner indoor alternative; above 200 it advises avoiding outdoor running. Missing, stale, failed-fetch, unconfirmed-location or over-100km station readings receive no suitability recommendation. A manually chosen station can be used if location permission is declined. Personal conditions, weather, heat and route safety are not evaluated.
+
+Source: https://www.doe.gov.my/wp-content/uploads/2021/10/General-Information-of-Air-Pollutant-Index.pdf (outdoor activity guidance, page 9). Running-specific wording and intensity choices are this app's conservative interpretation, not verbatim DOE recommendations.
+
+### Offline and updates
+
+The service worker caches the app shell only. Air-quality data is never cached by the service worker: an offline launch shows unavailable data instead of implying a fresh reading. If already open when the network fails, previously loaded values retain their timestamps and running advice is marked unverified. Shell updates are checked over the network; a future service worker version takes over after all older app windows are closed.
+
+The mobile first screen prioritizes the current IPU card and location controls. Larger accessibility text, very short landscape windows and browser permission overlays can still require scrolling; the page never locks scrolling or clips the reading to force a fit.

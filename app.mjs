@@ -1,6 +1,8 @@
 import {BANDS,band,distance,stale} from './core.mjs';
+import {runningAdvice,periodLabel} from './running.mjs';
 const $=id=>document.getElementById(id),escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-let data=null,selected=null,position=null,mode='DEFAULT STATION',busy=false,mapLoaded=false,geoBusy=false;
+let data=null,selected=null,position=null,mode='DEFAULT STATION',busy=false,mapLoaded=false,geoBusy=false,fetchFailed=false,opening=true;
+let lastHidden=0,lastFocus=null;
 const dateFmt=new Intl.DateTimeFormat('en-MY',{timeZone:'Asia/Kuala_Lumpur',day:'2-digit',month:'short',hour:'2-digit',minute:'2-digit',hour12:true});
 const hourFmt=new Intl.DateTimeFormat('en-GB',{timeZone:'Asia/Kuala_Lumpur',hour:'2-digit',minute:'2-digit',hour12:false});
 const fmt=t=>t?dateFmt.format(new Date(t)):'Not reported';
@@ -20,7 +22,7 @@ async function load(manual=false){
   if(!res.ok)throw Error(`HTTP ${res.status}`);
   const next=await res.json();
   if(next.schema!==1||!Array.isArray(next.stations)||!next.stations.length||!Number.isFinite(Date.parse(next.fetchedAt)))throw Error('Invalid data');
-  data=next;
+  data=next;fetchFailed=false;
   if(!station()){
    const saved=remembered();selected=data.stations.find(s=>s.id===saved)?.id||data.stations.find(s=>s.name.toLowerCase().includes('putrajaya'))?.id||data.stations[0].id;mode=saved===selected?'SAVED STATION':'DEFAULT STATION';
   }
@@ -28,8 +30,8 @@ async function load(manual=false){
   $('stateFilter').innerHTML='<option value="">All states</option>'+[...new Set(data.stations.map(s=>s.state))].sort().map(s=>`<option value="${escape(s)}">${escape(s)}</option>`).join('');$('stateFilter').value=prev;
   render();
   const aged=Date.now()-Date.parse(data.fetchedAt)>3*3600000;
-  say(aged?'Published data is over 3 hours old. Check the official portal for newer readings.':manual?(oldTime===data.fetchedAt?'Checked. No newer published data yet.':'Latest published readings loaded.'):'Use your location to find the nearest station, or search for a station.',aged);
- }catch(e){say(data?'Could not refresh. Previously loaded readings remain visible; check their observation times.':'Unable to load readings. Check your connection and try Refresh. For local preview, run the server described in README.',true);}
+  say(aged?'Published data is over 3 hours old. Check the official portal for newer readings.':manual?(oldTime===data.fetchedAt?'Checked. No newer published data yet.':'Latest published readings loaded.'):position?'Nearest-station distances use your current location.':'Location unavailable? Select a station manually.',aged);
+ }catch(e){fetchFailed=true;say(data?'Could not refresh. Previously loaded readings remain visible; check their observation times.':'Unable to load readings. Check your connection and try Refresh. For local preview, run the server described in README.',true);}
  finally{busy=false;$('refresh').disabled=false;}
 }
 function choose(id,newMode='SELECTED STATION'){
@@ -51,7 +53,7 @@ function render(){
  $('contextTitle').textContent=outdated?'Check the latest update.':s.value===null?'A reading is not available.':'A station reading, a local reference.';
  $('contextText').textContent=outdated?'This observation is more than 3 hours old, missing its timestamp, or has an unexpected future time. Refer to MyEQMS for current conditions.':nearby(s)>100&&position?'This station is more than 100 km away. It may not represent the air around you. This dashboard covers Malaysian monitoring stations only.':'Air quality at your exact location can differ. Use this reading as a reference and check official advisories before planning outdoor activities.';
  $('syncTime').textContent='Source last retrieved: '+fmt(Date.parse(data.fetchedAt))+' MYT. Scheduled collection: hourly; delays are possible.';
- renderChart();renderMap();renderNational();renderTable();
+ renderChart();renderMap();renderNational();renderTable();if($('runDialog').open)updateAdvice();
 }
 function points(){return (data?.history?.[selected]||[]).filter(p=>Number.isFinite(p.value)&&p.time>=Date.now()-24*3600000&&p.time<=Date.now()+15*60000).sort((a,b)=>a.time-b.time);}
 function renderChart(){
@@ -91,15 +93,32 @@ function search(){
  box.innerHTML=matches.length?matches.map(s=>`<button data-id="${escape(s.id)}">${escape(s.name)} <span class="small">· IPU ${s.value??'—'}</span></button>`).join(''):'<p>No matching stations. Try a state name.</p>';
 }
 async function locate(){
- if(geoBusy)return;if(!navigator.geolocation){say('Geolocation is unavailable. Search for a station instead.',true);return;}if(!data){say('Wait for station data to load, then try your location.',true);return;}
+ if(geoBusy)return;
+ if(!navigator.geolocation){say('Geolocation is unavailable. Search for a station instead.',true);return;}
+ if(!data){say('Wait for station data to load, then try your location.',true);return;}
  geoBusy=true;$('locate').disabled=true;say('Finding your location…');
- navigator.geolocation.getCurrentPosition(p=>{
-  position={lat:p.coords.latitude,lon:p.coords.longitude};const nearest=[...data.stations].sort((a,b)=>nearby(a)-nearby(b))[0];
+ try{
+  const p=await new Promise((resolve,reject)=>navigator.geolocation.getCurrentPosition(resolve,reject,{enableHighAccuracy:false,timeout:12000,maximumAge:60000}));
+  position={lat:p.coords.latitude,lon:p.coords.longitude};
+  const nearest=[...data.stations].sort((a,b)=>nearby(a)-nearby(b))[0];
   if(nearest&&Number.isFinite(nearby(nearest))){choose(nearest.id,'NEAREST STATION');if(nearby(nearest)>100)say('The nearest Malaysian station is over 100 km away and may not represent your location.',true);}
   else say('Station coordinates are unavailable. Choose a station manually.',true);
-  geoBusy=false;$('locate').disabled=false;
- },e=>{say(e.code===1?'Location permission was declined. You can still search or select a station.':'Your location could not be found. Try again or choose a station manually.',true);geoBusy=false;$('locate').disabled=false;},{enableHighAccuracy:false,timeout:15000,maximumAge:60000});
+ }catch(e){say(e.code===1?'Location permission was declined. Choose your running location manually.':'Your location could not be found. Tap Use my location to retry or choose a station.',true);}
+ finally{geoBusy=false;$('locate').disabled=false;}
 }
+function updateAdvice(){
+ const s=station(),a=runningAdvice(s,{verified:mode==='NEAREST STATION'||mode==='SELECTED STATION',distance:position?nearby(s||{}):null,fetchFailed});
+ $('runPeriod').textContent=periodLabel()+' · RUNNING OUTLOOK';
+ $('runTitle').textContent=a.title;$('runBody').textContent=a.body;$('runBadge').textContent=a.label;
+ $('runDialog').style.setProperty('--run-soft',a.soft);
+ $('runTimeNote').textContent=periodLabel()==='NIGHT'?'For a night run, choose a well-lit route and wear reflective details.':periodLabel()==='MORNING'?'Heading out later? Recheck the reading just before you start.':'Planning an evening or night run? Recheck closer to your start time; this is not a forecast.';
+ $('runBasis').textContent=s?`${s.name} · IPU ${s.value??'unavailable'} · ${fmt(s.time)} MYT${position?' · '+distanceText(s):' · location not verified'}`:'No station reading is available.';
+}
+function showAdvice(){updateAdvice();if(!$('runDialog').open){lastFocus=document.activeElement;$('runDialog').showModal();}}
+function closeAdvice(){$('runDialog').close();}
+$('runAdvice').onclick=showAdvice;$('closeRun').onclick=closeAdvice;$('doneRun').onclick=closeAdvice;
+$('runDialog').addEventListener('close',()=>{if(lastFocus&&lastFocus!==document.body)lastFocus.focus();});
+$('runDialog').addEventListener('click',e=>{if(e.target===$('runDialog')){const b=$('runDialog').getBoundingClientRect();if(e.clientX<b.left||e.clientX>b.right||e.clientY<b.top||e.clientY>b.bottom)closeAdvice();}});
 $('locate').onclick=locate;$('refresh').onclick=()=>load(true);$('stationSearch').oninput=search;
 $('stationSearch').onkeydown=e=>{if(e.key==='Escape')$('searchResults').hidden=true;if(e.key==='ArrowDown'){$('searchResults').querySelector('button')?.focus();e.preventDefault();}};
 $('searchResults').onclick=e=>{const b=e.target.closest('[data-id]');if(b){choose(b.dataset.id);$('stationSearch').focus();}};
@@ -113,7 +132,9 @@ $('download').onclick=()=>{
  const url=URL.createObjectURL(new Blob(['\ufeff'+csv],{type:'text/csv;charset=utf-8'})),a=document.createElement('a');a.href=url;a.download=`udara-${s.id}-24h.csv`;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);
 };
 await load();
-try{if((await navigator.permissions?.query({name:'geolocation'}))?.state==='granted')locate();}catch{}
+await locate();
+opening=false;showAdvice();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
 setInterval(()=>{if(!document.hidden)load();},5*60000);
 setInterval(()=>{clock();if(data){renderNational();renderTable();const s=station();$('freshness').textContent=s.value===null?'Reading unavailable':stale(s)?'Outdated reading':'Recent reading';$('freshness').classList.toggle('outdated',stale(s));}},60000);
-document.addEventListener('visibilitychange',()=>{if(!document.hidden)load();});
+document.addEventListener('visibilitychange',async()=>{if(document.hidden){lastHidden=Date.now();return;}if(opening||geoBusy)return;const reopening=lastHidden&&Date.now()-lastHidden>5*60000;await load();if(reopening){await locate();showAdvice();}});
