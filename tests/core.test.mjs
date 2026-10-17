@@ -1,0 +1,10 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {band,distance,normalize,stale,mergeHistory} from '../core.mjs';
+test('Malaysia IPU boundaries and missing values',()=>{for(const [n,expected] of [[0,'Good'],[50,'Good'],[51,'Moderate'],[100,'Moderate'],[101,'Unhealthy'],[200,'Unhealthy'],[201,'Very unhealthy'],[300,'Very unhealthy'],[301,'Hazardous'],[501,'Hazardous'],[null,'Unavailable'],[-1,'Unavailable']])assert.equal(band(n).name,expected);});
+test('distance does not silently treat absent coordinates as zero',()=>{assert.equal(distance({lat:0,lon:0},{lat:null,lon:0}),Infinity);assert.ok(Math.abs(distance({lat:0,lon:0},{lat:0,lon:1})-111.195)<.01);});
+test('normalizer preserves missing IPU and rejects incomplete source',()=>{const features=[{attributes:{STATION_ID:'A',STATION_LOCATION:'Station A',API:0,DATETIME:123,LATITUDE:2,LONGITUDE:101}},{attributes:{STATION_ID:'B',STATION_LOCATION:'Station B',API:null,DATETIME:123,LATITUDE:null,LONGITUDE:null}}];const s=normalize({features});assert.equal(s[0].value,0);assert.equal(s[1].value,null);assert.equal(s[1].lat,null);assert.throws(()=>normalize({features,exceededTransferLimit:true}));assert.throws(()=>normalize({error:{message:'Unavailable'}}));});
+test('old, missing, and future observations are outdated',()=>{const now=Date.now();assert.equal(stale({time:now-4*3600000},now),true);assert.equal(stale({time:now},now),false);assert.equal(stale({time:null},now),true);assert.equal(stale({time:now+3600000},now),true);});
+test('history deduplicates readings and does not fabricate gaps',()=>{const now=Date.now();const old={A:[{time:now-3600000,value:12},{time:now-50*3600000,value:1}]};const out=mergeHistory(old,[{id:'A',time:now-3600000,value:15},{id:'B',time:now,value:null}],now);assert.deepEqual(out.A,[{time:now-3600000,value:15}]);assert.deepEqual(out.B,[]);});
+
+test("DOE local-wall-clock epoch is normalized to UTC",()=>{const stations=normalize({features:[{attributes:{STATION_ID:"A",STATION_LOCATION:"A",API:50,DATETIME:Date.UTC(2026,9,17,20)}}]});assert.equal(new Date(stations[0].time).toISOString(),"2026-10-17T12:00:00.000Z");});
