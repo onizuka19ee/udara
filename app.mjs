@@ -1,4 +1,4 @@
-import {BANDS,band,distance,stale} from './core.mjs';
+import {BANDS,band,distance,stale,mergeHistory} from './core.mjs';
 import {runningAdvice,periodLabel} from './running.mjs';
 const $=id=>document.getElementById(id),escape=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 let data=null,selected=null,position=null,mode='DEFAULT STATION',busy=false,mapLoaded=false,geoBusy=false,fetchFailed=false,opening=true;
@@ -9,6 +9,13 @@ const fmt=t=>t?dateFmt.format(new Date(t)):'Not reported';
 function say(text,error=false){$('notice').textContent=text;$('notice').classList.toggle('error',error);}
 function clock(){$('clock').textContent=new Intl.DateTimeFormat('en-MY',{timeZone:'Asia/Kuala_Lumpur',weekday:'long',day:'numeric',month:'long',year:'numeric'}).format(new Date());}clock();
 $('legend').innerHTML=BANDS.map(b=>`<div class="legend-row"><i style="background:${b.color}"></i><span>${b.name}<small>${b.bm}</small></span><strong>${b.range}</strong></div>`).join('');
+function readHistory(){
+ try{
+  const parsed=JSON.parse(localStorage.getItem('udara.history.v1')||'{}');
+  if(!parsed||typeof parsed!=='object'||Array.isArray(parsed))return {};
+  return Object.fromEntries(Object.entries(parsed).filter(([,ps])=>Array.isArray(ps)).map(([id,ps])=>[id,ps.filter(p=>p&&Number.isFinite(p.time)&&Number.isFinite(p.value)&&p.value>=0)]));
+ }catch{return {};}
+}
 function remembered(){try{return localStorage.getItem('udara.station');}catch{return null;}}
 function remember(id){try{localStorage.setItem('udara.station',id);}catch{}}
 function station(){return data?.stations.find(s=>s.id===selected);}
@@ -16,13 +23,15 @@ function nearby(s){return position?distance(position,s):Infinity;}
 function distanceText(s){const d=nearby(s);return Number.isFinite(d)?`${d.toFixed(1)} km`:'—';}
 async function load(manual=false){
  if(busy)return;busy=true;$('refresh').disabled=true;
- const oldTime=data?.fetchedAt;
+ const oldReadings=data?JSON.stringify(data.stations.map(s=>[s.id,s.time,s.value])):null;
  try{
-  const res=await fetch(`./data/latest.json?t=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(20000)});
+  const res=await fetch(`./api/readings?t=${Date.now()}`,{cache:'no-store',signal:AbortSignal.timeout(20000)});
   if(!res.ok)throw Error(`HTTP ${res.status}`);
   const next=await res.json();
   if(next.schema!==1||!Array.isArray(next.stations)||!next.stations.length||!Number.isFinite(Date.parse(next.fetchedAt)))throw Error('Invalid data');
+  next.history=mergeHistory(data?.history||readHistory(),next.stations);
   data=next;fetchFailed=false;
+  try{localStorage.setItem('udara.history.v1',JSON.stringify(next.history));}catch{}
   if(!station()){
    const saved=remembered();selected=data.stations.find(s=>s.id===saved)?.id||data.stations.find(s=>s.name.toLowerCase().includes('putrajaya'))?.id||data.stations[0].id;mode=saved===selected?'SAVED STATION':'DEFAULT STATION';
   }
@@ -30,8 +39,8 @@ async function load(manual=false){
   $('stateFilter').innerHTML='<option value="">All states</option>'+[...new Set(data.stations.map(s=>s.state))].sort().map(s=>`<option value="${escape(s)}">${escape(s)}</option>`).join('');$('stateFilter').value=prev;
   render();
   const aged=Date.now()-Date.parse(data.fetchedAt)>3*3600000;
-  say(aged?'Published data is over 3 hours old. Check the official portal for newer readings.':manual?(oldTime===data.fetchedAt?'Checked. No newer published data yet.':'Latest published readings loaded.'):position?'Nearest-station distances use your current location.':'Location unavailable? Select a station manually.',aged);
- }catch(e){fetchFailed=true;say(data?'Could not refresh. Previously loaded readings remain visible; check their observation times.':'Unable to load readings. Check your connection and try Refresh. For local preview, run the server described in README.',true);}
+  say(aged?'Source retrieval time is unexpected. Check the official portal.':manual?(oldReadings===JSON.stringify(data.stations.map(s=>[s.id,s.time,s.value]))?'Checked MyEQMS. The official readings are unchanged.':'Latest available MyEQMS readings loaded.'):position?'Nearest-station distances use your current location.':'Location unavailable? Select a station manually.',aged);
+ }catch(e){fetchFailed=true;say(data?'Could not refresh. Previously loaded readings remain visible; check their observation times.':'Unable to retrieve MyEQMS readings. Check your connection and try Refresh, or open the official portal.',true);}
  finally{busy=false;$('refresh').disabled=false;}
 }
 function choose(id,newMode='SELECTED STATION'){
@@ -52,7 +61,7 @@ function render(){
  $('pollutantNote').textContent=s.pollutant?`Dominant parameter reported by DOE${s.symbol?` (source marker: ${s.symbol})`:''}. Concentration is not supplied in this feed.`:'The source has not supplied a dominant parameter for this station.';
  $('contextTitle').textContent=outdated?'Check the latest update.':s.value===null?'A reading is not available.':'A station reading, a local reference.';
  $('contextText').textContent=outdated?'This observation is more than 3 hours old, missing its timestamp, or has an unexpected future time. Refer to MyEQMS for current conditions.':nearby(s)>100&&position?'This station is more than 100 km away. It may not represent the air around you. This dashboard covers Malaysian monitoring stations only.':'Air quality at your exact location can differ. Use this reading as a reference and check official advisories before planning outdoor activities.';
- $('syncTime').textContent='Source last retrieved: '+fmt(Date.parse(data.fetchedAt))+' MYT. Scheduled collection: hourly; delays are possible.';
+ $('syncTime').textContent='Source last retrieved: '+fmt(Date.parse(data.fetchedAt))+' MYT. Retrieved on opening or manual refresh; no scheduled collection.';
  renderChart();renderMap();renderNational();renderTable();if($('runDialog').open)updateAdvice();
 }
 function points(){return (data?.history?.[selected]||[]).filter(p=>Number.isFinite(p.value)&&p.time>=Date.now()-24*3600000&&p.time<=Date.now()+15*60000).sort((a,b)=>a.time-b.time);}
@@ -135,6 +144,5 @@ await load();
 await locate();
 opening=false;showAdvice();
 if('serviceWorker' in navigator)navigator.serviceWorker.register('./sw.js').catch(()=>{});
-setInterval(()=>{if(!document.hidden)load();},5*60000);
-setInterval(()=>{clock();if(data){renderNational();renderTable();const s=station();$('freshness').textContent=s.value===null?'Reading unavailable':stale(s)?'Outdated reading':'Recent reading';$('freshness').classList.toggle('outdated',stale(s));}},60000);
-document.addEventListener('visibilitychange',async()=>{if(document.hidden){lastHidden=Date.now();return;}if(opening||geoBusy)return;const reopening=lastHidden&&Date.now()-lastHidden>5*60000;await load();if(reopening){await locate();showAdvice();}});
+setInterval(()=>{clock();if(data){renderNational();renderTable();const s=station();$('freshness').textContent=s.value===null?'Reading unavailable':stale(s)?'Outdated reading':'Recent reading';$('freshness').classList.toggle('outdated',stale(s));if($('runDialog').open)updateAdvice();}},60000);
+document.addEventListener('visibilitychange',async()=>{if(document.hidden){lastHidden=Date.now();return;}if(opening||geoBusy)return;const reopening=lastHidden&&Date.now()-lastHidden>5*60000;if(reopening){await load();await locate();showAdvice();}});

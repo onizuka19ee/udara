@@ -1,105 +1,88 @@
-# Udara by SMT — Malaysia Air Monitor · v1.1
+# Udara by SMT · v1.2 — Cloudflare on-demand edition
 
-A responsive, dependency-free IPU dashboard designed for GitHub Pages. No API key, paid service, or running PC is needed. This is an independent dashboard, not an official DOE application.
+This version preserves the responsive dashboard, automatic location detection, running popup and iOS/PWA support. It fetches official MyEQMS readings only:
 
-## Publish manually on GitHub
+- On a fresh page load / opening the app.
+- When you tap Refresh or reload the page.
+- When you return after more than five minutes in the background (treated as reopening).
 
-1. Extract this ZIP. Create a **public** GitHub repository with the default branch **main**.
-2. Upload the **contents** of `ipu-monitor`, not the outer folder. `index.html` must be at the repository root. Include `data`, `scripts`, `tests`, and **`.github/workflows/update-and-deploy.yml`**. The `.github` folder may be hidden in your file manager. If browser upload skips it, use GitHub **Add file → Create new file**, enter `.github/workflows/update-and-deploy.yml`, and paste the supplied workflow text.
-3. Open **Settings → Pages → Build and deployment → Source**, and select **GitHub Actions**.
-4. Under **Settings → Actions → General → Workflow permissions**, allow **Read and write permissions**. The workflow stores new observations in `data/latest.json`. Repository rules must permit the workflow to push to `main`.
-5. Open **Actions → Update IPU and deploy → Run workflow → main**. If the first automatic run failed before Pages was enabled, rerun it now.
-6. When deployment finishes, open the URL under **Settings → Pages**: normally `https://YOUR-USERNAME.github.io/YOUR-REPOSITORY/`.
-7. Location is requested automatically when the app opens. Allow access when prompted. Tap **Use my location** to retry if needed. On a laptop, approximate Wi-Fi positioning may be less precise than phone GPS. If permission is denied, search for a station or choose one from the table.
+There is no hourly job and no automatic data polling while the dashboard remains open. The one-minute display timer only updates the date and stale-data labels; it makes no network requests. Refresh cannot create a newer official station measurement.
 
-Do not upload the ZIP itself as the website. No npm installation or build is needed. All paths support both a repository subdirectory and a custom domain. To use your own domain, configure it under GitHub Pages settings and follow GitHub's DNS instructions.
+## Update an existing Cloudflare Pages site connected to GitHub
 
-## Data and update behaviour
+1. Extract this ZIP. Upload the **contents** of `ipu-monitor` to your existing repository root. Keep your existing domain configuration.
+2. Include the new **`functions/` and `server/` folders**, `package.json`, and the updated app files. The Function provides `/api/readings` on the same domain. Static files alone are insufficient.
+3. **Replace `.github/workflows/update-and-deploy.yml` with the supplied file of the same name.** It no longer contains a schedule, collector, bot commit or GitHub Pages deployment. It only checks code on pushes or a manual run. If you created other hourly workflows or Cloudflare Cron Triggers separately, disable those too.
+4. In Cloudflare Pages, open this project's build settings. Use:
+   - Framework preset: **None**
+   - Build command: **npm run build**
+   - Build output directory: **dist**
+   - Root directory: the repository root (leave blank), unless these files are in a repository subfolder.
+5. Redeploy through your existing Git integration. Pages builds `functions/api/readings.js` from the project root; do not move `functions` inside `dist`.
+6. Open **your-site-domain/api/readings**. It should return JSON containing `schema`, `fetchedAt`, and `stations`. An HTML page or 404 means the Function was not deployed. A JSON 502 error means the Function is running but cannot currently retrieve/validate the official source.
+7. Open the dashboard and tap Refresh. The source retrieval time should change; the station observation time may remain unchanged if MyEQMS has not published a newer measurement.
 
-- Source: https://eqms.doe.gov.my/ (the destination of the supplied Google link).
-- Official public ArcGIS query: `SOURCE` in `core.mjs`. It returns station IPU, observation timestamp, dominant pollutant, category, and coordinates.
-- The source's CORS headers do not allow arbitrary GitHub Pages origins. **GitHub Actions fetches on the server**, saves validated JSON, and deploys it with the site. No public CORS proxy is used.
-- The workflow runs hourly at minute 17 UTC, on pushes to `main`, and on manual runs. GitHub schedules can be delayed; this is not guaranteed real-time monitoring. Refresh in the app fetches the latest **published snapshot**, not the government server directly. It also checks automatically every 5 minutes while visible.
-- GitHub may disable schedules in inactive public repositories after 60 days. Check the Actions tab periodically and re-enable if needed. GitHub plan limits and policies apply.
-- The archive includes a real snapshot retrieved during development, not sample readings. Its original observation and fetch timestamps are retained. The first workflow run replaces it with current available data.
-- Readings older than 3 hours, missing a timestamp, or more than 15 minutes in the future are marked outdated. Outdated and missing readings are excluded from the national category totals.
-- A failed source request never replaces the last saved data. The workflow emits a warning and publishes the existing snapshot with its original timestamps. If data becomes old, the site displays a warning.
-- The feed does **not** supply pollutant concentrations, weather, a forecast, or complete history. None are fabricated or silently substituted with a different country's AQI scale.
-- A rolling 48-hour observation history is retained; the chart displays the last 24 hours. History builds after deployment. Duplicate observation timestamps are updated rather than appended. Gaps over 90 minutes are not connected.
-- Timestamp handling: this specific DOE MapServer encodes Malaysian wall-clock time into epoch components; its official map uses UTC getters to display those components. The adapter subtracts 8 hours to obtain a true UTC instant, then the UI formats it in Malaysia time. Re-check this mapping if DOE changes the endpoint.
-- DOE source markers (such as `**`) are displayed verbatim; the dominant parameter text is preserved as reported. Refer to MyEQMS for marker interpretation.
-- IPU categories: 0–50 Good; 51–100 Moderate; 101–200 Unhealthy; 201–300 Very unhealthy; over 300 Hazardous. Colours follow the MyEQMS interface: blue, green, yellow, orange, red.
+**Keep your existing `data/latest.json` if you want it as an archive.** This version no longer fetches that file. The old collector script is retained for archival/manual use only and is not invoked by the build, app or workflow. Its old history is not imported automatically.
 
-## Features
+## If your Cloudflare project is a Worker with Static Assets
 
-- Nearest station using browser geolocation and great-circle distance, calculated entirely in the browser.
-- Automatic location request on opening. A saved station or Putrajaya is only a labelled fallback if location is unavailable; the running popup asks you to confirm a station before assessing suitability.
-- Search by station/state; state filter; highest, lowest, alphabetical and nearest sorting.
-- Station timestamp, freshness, distance, dominant pollutant and site details.
-- On-demand OpenStreetMap; external map link remains usable if the embed is blocked.
-- Actual collected trend and CSV download; Malaysia time display, with UTC timestamps also in CSV.
-- Keyboard-accessible controls, visible focus, screen-reader status messages, reduced-motion support, mobile layout, and no external JavaScript dependencies.
-- No analytics, AI branding, account system, or GPS storage. Only the selected station ID is saved in localStorage. Map requests expose the selected station location to OpenStreetMap, not the user's GPS coordinates.
+Use the supplied `worker.mjs` instead of Pages Functions. Edit `name` in `wrangler.workers.jsonc` to match your existing Worker (do not create a new Worker accidentally). Keep your current domain/routes configuration. Configure your Git-connected Worker:
 
-## Preview locally
+- Build command: `npm run build`
+- Deploy command: `npx wrangler deploy --config wrangler.workers.jsonc`
 
-From this folder, run:
+The config binds `dist` as `ASSETS` and routes `/api/*` through the Worker first. There are no Cron Triggers, database bindings or API keys. The web app expects hosting at the domain root.
+
+## If you previously uploaded a static ZIP directly
+
+A plain static upload does not install this backend. Deploy with Pages Git integration, or use Wrangler from this folder:
 
 ```bash
-python -m http.server 8080
+npm run build
+npx wrangler pages deploy dist --project-name YOUR_EXISTING_PAGES_PROJECT
 ```
 
-Windows can use `py -m http.server 8080`. Open http://localhost:8080. Do not double-click `index.html`: browsers block module/fetch behaviour on `file://`. Location access requires HTTPS or localhost. Accessing a local server via a phone over plain HTTP may not support geolocation; use the HTTPS GitHub Pages URL.
+Wrangler must run from this project root so it discovers `functions/`. It will ask you to authenticate to your Cloudflare account. For Workers instead, use the explicit config command above. Cloudflare account limits and policies apply.
 
-## Manual collection / verification
+## What happens to the trend chart?
+
+History is now collected in this browser's localStorage, with a rolling 48-hour retention and a 24-hour chart. Opening or refreshing records the returned observations, deduplicated by their original station timestamp. No values are invented between visits. Gaps over 90 minutes stay unconnected. History begins with this version and may differ between Safari, an installed home-screen app, and another device. Clearing website data removes it. If browser storage is blocked, readings still work and history lasts for the current page session. CSV export remains available.
+
+## Source and data handling
+
+`server/readings.mjs` retrieves the fixed official DOE MyEQMS endpoint defined in `core.mjs`. It accepts GET only, never accepts a user-supplied upstream URL, does not send user coordinates to DOE, validates the result, and returns non-cacheable JSON. Upstream failures return HTTP 502; previous readings already in memory retain their observation times and running advice becomes unverified. A fresh offline launch has no current readings. The service worker excludes `/api/` and `/data/` from caching.
+
+Observation timestamps and retrieval timestamps are distinct. This particular MapServer encodes MYT wall-clock components into epoch milliseconds; the adapter subtracts eight hours, matching the official map's UTC-getter display convention. Re-check if DOE changes the endpoint. Readings over three hours old, missing timestamps, or unexpectedly future-dated are marked outdated and excluded from national totals.
+
+IPU is the Malaysian index, not pollutant concentration or another country's AQI. The feed has station information and dominant pollutant but no concentration values, weather or forecasts. Source: https://eqms.doe.gov.my/.
+
+## iPhone / PWA
+
+Open the HTTPS site in Safari → Share → Add to Home Screen → enable Open as Web App if offered. The supplied Apple touch and PWA icons use Udara's existing identity. Location is requested automatically and requires your permission. The selected station and recorded history remain on your device; your precise location is not persisted. OpenStreetMap receives the selected station coordinates only when you load the map.
+
+After upgrading, fully close old Udara browser/app windows and reopen once so the v1.2 service worker can activate. If an old icon remains, remove and add the home-screen shortcut again. The app shell can be used offline, but the IPU endpoint is always network-only.
+
+## Running outlook
+
+Shown after the opening location attempt and on reopening after five minutes away; accessible anytime via Running outlook. The morning/evening/night wording follows Malaysia time and does not predict future conditions. Advice uses current available IPU; it does not assess weather, heat, medical history or route conditions. No suitability recommendation is given for failed-fetch, stale, missing, unconfirmed-location or very distant (>100 km) readings.
+
+The app's conservative running guidance is based on DOE's outdoor-activity guidance (page 9): https://www.doe.gov.my/wp-content/uploads/2021/10/General-Information-of-Air-Pollutant-Index.pdf. Running-specific wording is an interpretation, not verbatim DOE advice. This is an independent application.
+
+## Local checks
 
 Node.js 22 or later:
 
 ```bash
-node --test tests/*.test.mjs
-node scripts/update-data.mjs
+npm test
+npm run build
+npx wrangler pages dev dist
 ```
 
-Tests cover category boundaries, missing data, distances, stale data, rejected source payloads and history deduplication. The development environment did not provide a supported browser QA tool, so visual rendering and geolocation permission flows must be checked on your laptop/phone after deployment. Deployment to your own GitHub repository was intentionally not performed.
+For Workers: `npx wrangler dev --config wrangler.workers.jsonc` after building. A simple Python static server is no longer sufficient for the live endpoint.
 
-## Troubleshooting
+Tests cover category boundaries, distance/missing values, timestamp conversion, history, running advice and endpoint success/error/method handling. The official source has been checked from the development environment; account-specific Cloudflare deployment and device UI flows must be checked after you deploy. No changes have been made to your Cloudflare account or live site.
 
-- **No new readings:** check the latest Action's `Retrieve official readings` log. Source availability or schema changes can require adapter updates. Check the official portal.
-- **403 when saving observations:** enable workflow write permissions and ensure branch protection permits the bot's commit. The workflow will stop rather than discard history.
-- **Pages deployment fails:** select GitHub Actions as the Pages source and check environment protection rules.
-- **Location denied:** enable site location permission in browser/device settings, then tap Use my location again. Manual station selection always remains available.
-- **Very distant station:** this app monitors Malaysian stations only. A distance warning appears above 100 km. Nearest does not guarantee representative conditions.
-- **Blank chart:** at least two distinct timestamped readings within 24 hours are needed. It is normal immediately after first deployment.
-
-## File guide
-
-`index.html` layout; `style.css` responsive visual design; `app.mjs` interactions; `core.mjs` source adapter and calculations; `data/latest.json` snapshot plus collected history; `scripts/update-data.mjs` collector; `.github/workflows/update-and-deploy.yml` updates and deployment; `tests/core.test.mjs` data tests.
-
-Official source: https://eqms.doe.gov.my/
-GitHub Pages workflow reference: https://docs.github.com/en/pages/getting-started-with-github-pages/using-custom-workflows-with-github-pages
-GitHub scheduled workflow reference: https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#schedule
-
-
-## Updating your existing deployment to v1.1
-
-Upload and replace the supplied application files **and** `.github/workflows/update-and-deploy.yml`. The workflow now copies the PWA icons, manifest, service worker and running-advice module. **Keep your repository's existing `data/latest.json`** when updating to preserve your collected history; do not overwrite it with the snapshot in this ZIP. Keep any existing custom-domain settings or CNAME file. Run the workflow after updating.
-
-New files: `running.mjs`, `manifest.webmanifest`, `sw.js`, `icons/`, and `tests/running.test.mjs`.
-
-### iPhone installation
-
-Open your HTTPS site in Safari → Share → Add to Home Screen → enable Open as Web App if offered → Add. The opaque 180px Apple touch icon is supplied alongside 192px, 512px and maskable PWA icons. The installed app opens in standalone mode. If an old home-screen shortcut retains its icon, remove that shortcut and add the updated site again. Browser permission is still required for location; automatic detection cannot bypass it.
-
-### Running popup
-
-Shows on each fresh page opening, after the location attempt, and when returning after more than five minutes in the background. Reopen anytime using **Running outlook** beneath the current reading. Morning, afternoon, evening and night labels use Malaysia time; they do not predict future air quality. Dismiss using the close button, Back to dashboard, Escape, or outside the sheet. Reduced-motion preferences disable animations.
-
-Advice is a conservative running interpretation of DOE outdoor-activity guidance. At IPU 0–50, outdoor running is generally suitable from an air-quality perspective; at 51–100 the app suggests comfortable effort; at 101–200 it suggests a cleaner indoor alternative; above 200 it advises avoiding outdoor running. Missing, stale, failed-fetch, unconfirmed-location or over-100km station readings receive no suitability recommendation. A manually chosen station can be used if location permission is declined. Personal conditions, weather, heat and route safety are not evaluated.
-
-Source: https://www.doe.gov.my/wp-content/uploads/2021/10/General-Information-of-Air-Pollutant-Index.pdf (outdoor activity guidance, page 9). Running-specific wording and intensity choices are this app's conservative interpretation, not verbatim DOE recommendations.
-
-### Offline and updates
-
-The service worker caches the app shell only. Air-quality data is never cached by the service worker: an offline launch shows unavailable data instead of implying a fresh reading. If already open when the network fails, previously loaded values retain their timestamps and running advice is marked unverified. Shell updates are checked over the network; a future service worker version takes over after all older app windows are closed.
-
-The mobile first screen prioritizes the current IPU card and location controls. Larger accessibility text, very short landscape windows and browser permission overlays can still require scrolling; the page never locks scrolling or clips the reading to force a fit.
+Cloudflare references:
+- https://developers.cloudflare.com/pages/functions/routing/
+- https://developers.cloudflare.com/pages/functions/deployment/
+- https://developers.cloudflare.com/workers/static-assets/binding/
